@@ -79,79 +79,50 @@ CHECK_VENDOR_IMAGE() {
 
 DOWNLOAD_FIRMWARE() {
     if [ "$#" -lt 4 ]; then
-        echo -e "Usage: ${FUNCNAME[0]} <MODEL> <CSC> <IMEI> <DOWNLOAD_DIRECTORY> [VERSION]"
+        echo -e "Usage: ${FUNCNAME[0]} <MODEL> <CSC> <IMEI> <DOWNLOAD_DIRECTORY>"
         return 1
     fi
 
     local MODEL="$1"
     local CSC="$2"
     local IMEI="$3"
-    local DOWN_DIR="${4}/$MODEL"
-    local VERSION="${5:-}"
+    local DOWN_DIR="${4}/${MODEL}"
 
     rm -rf "$DOWN_DIR"
     mkdir -p "$DOWN_DIR"
 
-        echo -e "${BLUE}======================================${RESET}"
-        echo -e "${BLUE}       Samsung FW Downloader${RESET}"
-        echo -e "${BLUE}======================================${RESET}"
-        echo -e "${PURPLE}MODEL:${RESET} $MODEL | ${PURPLE}CSC:${RESET} $CSC"
+    echo -e "======================================"
+    echo -e "  Samsung FW Downloader"
+    echo -e "======================================"
+    echo -e "MODEL: $MODEL | CSC: $CSC"
 
-        # --- Step 1: Determine Version ---
-        if [ -n "$VERSION" ]; then
-            echo -e "- ✅ Downloading provided version: $VERSION"
-        else
-            echo -e "- Fetching latest firmware..."
+    local VERSION
+    VERSION=$(python3 -m samloader -m "$MODEL" -r "$CSC" -i "$IMEI" checkupdate 2>&1)
 
-            VERSION=$(python3 -m samloader -m "$MODEL" -r "$CSC" -i "$IMEI" checkupdate 2>&1)
+    if [ $? -ne 0 ] || [ -z "$VERSION" ]; then
+        echo -e "${RED}⛔️ MODEL/CSC/IMEI not valid or no update found.${RESET}"
+        echo -e "Error: $VERSION"
+        return 1
+    fi
 
-            if [ $? -ne 0 ] || [ -z "$VERSION" ]; then
-                echo -e "- ⛔️ MODEL/CSC/IMEI not valid or no update found."
-                echo -e "- Error: $VERSION"
-                return 1
-            fi
+    echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+    echo -e "Latest version: $VERSION"
 
-            echo -e "- ✅ Latest version found: $VERSION"
-            if [ -n "$GITHUB_ENV" ]; then
-                echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-            fi
-        fi
+    python3 -m samloader -m "$MODEL" -r "$CSC" -i "$IMEI" download -v "$VERSION" -O "$DOWN_DIR"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}⛔️ Download failed. Check IMEI/MODEL/CSC.${RESET}"
+        return 1
+    fi
 
-        # --- Step 2: Download Firmware ---
-        python3 -m samloader -m "$MODEL" -r "$CSC" -i "$IMEI" download -v "$VERSION" -O "$DOWN_DIR"
-        if [ $? -ne 0 ]; then
-            echo -e "- ⛔️ Download failed. Check IMEI/MODEL/CSC."
-            exit 1
-        fi
+    find "$DOWN_DIR" -type f -name "*.zip.enc*" -delete
 
-        # --- Step 3: Decrypt Firmware ---
-        enc_file=$(find "$DOWN_DIR" -name "*.enc*" | head -n 1)
-
-        if [ -z "$enc_file" ]; then
-            echo -e "- ⛔️ No encrypted firmware file found!"
-            exit 1
-        fi
-
-        python3 -m samloader -m "$MODEL" -r "$CSC" -i "$IMEI" decrypt \
-            -v "$VERSION" \
-            -i "$enc_file" \
-            -o "${DOWN_DIR}/${MODEL}.zip" >/dev/null 2>&1
-
-        if [ $? -ne 0 ]; then
-            echo -e "- ⛔️ Decryption failed."
-            exit 1
-        fi
-
-        # --- Show Firmware Info ---
-        file_size=$(du -m "${DOWN_DIR}/${MODEL}.zip" | cut -f1)
-
-        echo
-        echo -e "- ✅ Firmware decrypted successfully! Firmware Size: ${file_size} MB"
-        echo -e "- Saved to: ${DOWN_DIR}/${MODEL}.zip"
-
-        # --- Cleanup ---
-        rm -f "$enc_file"
+    local FW_ZIP
+    FW_ZIP=$(find "$DOWN_DIR" -maxdepth 1 -name "*.zip" | head -n 1)
+    local FILE_SIZE
+    FILE_SIZE=$(du -m "$FW_ZIP" 2>/dev/null | cut -f1)
+    echo -e "Firmware Size: ${FILE_SIZE} MB"
 }
+
 
 DOWNLOAD_FIRMWARE_LUMI() {
     if [ "$#" -lt 1 ]; then
